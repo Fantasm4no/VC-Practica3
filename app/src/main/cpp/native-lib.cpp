@@ -4,61 +4,134 @@
 #include <android/bitmap.h>
 #include <android/log.h>
 
-using namespace cv;
+#include <string>
+#include <vector>
+#include <cmath>
 
 #define LOGI(...) ((void)__android_log_print(ANDROID_LOG_INFO, "NativeLib", __VA_ARGS__))
 
-extern "C" JNIEXPORT jobject JNICALL
-Java_ups_edu_aplicacionnativa_MainActivity_processAndReturnBitmap(JNIEnv* env, jobject /* this */, jobject bitmap) {
+using namespace cv;
+using namespace std;
+
+struct Descriptor {
+    string label;
+    double huMoments[7];
+    vector<double> signature;
+};
+
+static vector<Descriptor> g_descriptors;
+static bool isShapeFilled = true;
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_ups_edu_aplicacionnativa_MainActivity_setDescriptorsNative(JNIEnv* env, jobject /* this */,
+                                                                jobjectArray labels,
+                                                                jobjectArray huMomentsArrays,
+                                                                jobjectArray signaturesArrays) {
+    g_descriptors.clear();
+
+    jsize n = env->GetArrayLength(labels);
+
+    for (jsize i = 0; i < n; ++i) {
+        jstring labelJ = (jstring) env->GetObjectArrayElement(labels, i);
+        const char* labelC = env->GetStringUTFChars(labelJ, nullptr);
+
+        jobject huArrayObj = env->GetObjectArrayElement(huMomentsArrays, i);
+        jdoubleArray huArray = (jdoubleArray) huArrayObj;
+        jdouble* huElements = env->GetDoubleArrayElements(huArray, nullptr);
+
+        jobject sigArrayObj = env->GetObjectArrayElement(signaturesArrays, i);
+        jdoubleArray sigArray = (jdoubleArray) sigArrayObj;
+        jdouble* sigElements = env->GetDoubleArrayElements(sigArray, nullptr);
+        jsize sigLen = env->GetArrayLength(sigArray);
+
+        Descriptor d;
+        d.label = std::string(labelC);
+
+        for (int j = 0; j < 7; ++j) {
+            d.huMoments[j] = huElements[j];
+        }
+
+        d.signature.assign(sigElements, sigElements + sigLen);
+
+        g_descriptors.push_back(d);
+
+        env->ReleaseStringUTFChars(labelJ, labelC);
+        env->ReleaseDoubleArrayElements(huArray, huElements, JNI_ABORT);
+        env->ReleaseDoubleArrayElements(sigArray, sigElements, JNI_ABORT);
+    }
+
+    LOGI("Se cargaron %d descriptores nativos con firmas", (int)g_descriptors.size());
+}
+
+static vector<double> calculateSignatureFromContour(const vector<Point>& contour) {
+    Moments contourMoments = moments(contour);
+    Point2f centroid(contourMoments.m10 / contourMoments.m00, contourMoments.m01 / contourMoments.m00);
+
+    vector<double> signature;
+    for (const Point& pt : contour) {
+        double dist = norm(Point2f(pt) - centroid);
+        signature.push_back(dist);
+    }
+
+    // Normalizar firma dividiendo por el valor máximo
+    double maxDist = 0;
+    for (double v : signature) {
+        if (v > maxDist) maxDist = v;
+    }
+    if (maxDist > 0) {
+        for (double& v : signature) {
+            v /= maxDist;
+        }
+    }
+
+    return signature;
+}
+
+extern "C"
+JNIEXPORT jstring JNICALL
+Java_ups_edu_aplicacionnativa_MainActivity_classifyShapeNative(JNIEnv* env, jobject /* this */, jobject bitmap) {
     AndroidBitmapInfo info;
     void* pixels = nullptr;
 
     if (AndroidBitmap_getInfo(env, bitmap, &info) < 0) {
         LOGI("Error al obtener info del bitmap");
-        return nullptr;
+        return env->NewStringUTF("Error");
     }
 
     if (info.format != ANDROID_BITMAP_FORMAT_RGBA_8888) {
         LOGI("Formato de bitmap no soportado");
-        return nullptr;
+        return env->NewStringUTF("Formato no soportado");
     }
 
     if (AndroidBitmap_lockPixels(env, bitmap, &pixels) < 0) {
         LOGI("Error al bloquear pixeles");
-        return nullptr;
+        return env->NewStringUTF("Error");
     }
 
     Mat img(info.height, info.width, CV_8UC4, pixels);
 
-    // 1. Convertir a gris
-    Mat gray;
+    // Procesamiento imagen: gris, blur, threshold, morph close
+    Mat gray, blurred, binary, closed;
     cvtColor(img, gray, COLOR_RGBA2GRAY);
-
-    // 2. Gaussian blur 5x5
-    Mat blurred;
-    GaussianBlur(gray, blurred, Size(5, 5), 0);
-
-    // 3. Threshold inverso con Otsu
-    Mat binary;
+    GaussianBlur(gray, blurred, Size(5,5), 0);
     threshold(blurred, binary, 0, 255, THRESH_BINARY | THRESH_OTSU);
+    Mat kernel = getStructuringElement(MORPH_ELLIPSE, Size(7,7));
+    morphologyEx(binary, closed, MORPH_CLOSE, kernel, Point(-1,-1), 2);
 
-    // 4. Morph close elíptico 7x7, 2 iteraciones
-    Mat kernel = getStructuringElement(MORPH_ELLIPSE, Size(7, 7));
-    Mat closed;
-    morphologyEx(binary, closed, MORPH_CLOSE, kernel, Point(-1, -1), 2);
+    AndroidBitmap_unlockPixels(env, bitmap);
 
-    // 5. Encontrar contornos externos
-    std::vector<std::vector<Point>> contours;
-    std::vector<Vec4i> hierarchy;
+    // Encontrar contornos
+    vector<vector<Point>> contours;
+    vector<Vec4i> hierarchy;
     findContours(closed, contours, hierarchy, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
 
     if (contours.empty()) {
         LOGI("No se detectaron contornos");
-        AndroidBitmap_unlockPixels(env, bitmap);
-        return nullptr;
+        return env->NewStringUTF("No figura");
     }
 
-    // 6. Seleccionar contorno más grande
+    // Contorno más grande
     int largestContourIdx = 0;
     double maxArea = 0;
     for (size_t i = 0; i < contours.size(); i++) {
@@ -69,48 +142,66 @@ Java_ups_edu_aplicacionnativa_MainActivity_processAndReturnBitmap(JNIEnv* env, j
         }
     }
 
-    // 7. Crear imagen rellena solo con contorno más grande
+    // Imagen rellena con contorno más grande
     Mat filledImage = Mat::zeros(closed.size(), CV_8UC1);
     drawContours(filledImage, contours, largestContourIdx, Scalar(255), FILLED);
 
-    AndroidBitmap_unlockPixels(env, bitmap);
+    // Validar relleno
+    int whitePixels = countNonZero(filledImage);
+    int totalPixels = filledImage.rows * filledImage.cols;
+    double whiteRatio = (double)whitePixels / totalPixels;
+    LOGI("White pixel ratio: %f", whiteRatio);
+    isShapeFilled = (whiteRatio > 0.05);
 
-    // 8. Crear Bitmap Android ARGB_8888 para devolver la imagen procesada
-    jclass bitmapClass = env->FindClass("android/graphics/Bitmap");
-    jmethodID createBitmapMethod = env->GetStaticMethodID(bitmapClass, "createBitmap",
-                                                          "(IILandroid/graphics/Bitmap$Config;)Landroid/graphics/Bitmap;");
-    jclass bitmapConfigClass = env->FindClass("android/graphics/Bitmap$Config");
-    jmethodID valueOfMethod = env->GetStaticMethodID(bitmapConfigClass, "valueOf",
-                                                     "(Ljava/lang/String;)Landroid/graphics/Bitmap$Config;");
-    jobject argb8888 = env->CallStaticObjectMethod(bitmapConfigClass, valueOfMethod,
-                                                   env->NewStringUTF("ARGB_8888"));
+    // Momentos Hu sobre imagen rellena
+    Moments moms = moments(filledImage, true);
+    double huMoments[7];
+    HuMoments(moms, huMoments);
 
-    jobject resultBitmap = env->CallStaticObjectMethod(bitmapClass, createBitmapMethod,
-                                                       filledImage.cols, filledImage.rows, argb8888);
-
-    void* resultPixels = nullptr;
-    if (AndroidBitmap_lockPixels(env, resultBitmap, &resultPixels) < 0) {
-        LOGI("Error al bloquear pixeles del bitmap resultado");
-        return nullptr;
+    // Normalizar momentos Hu
+    for (int i = 0; i < 7; i++) {
+        huMoments[i] = -1 * copysign(1.0, huMoments[i]) * log10(abs(huMoments[i]) + 1e-30);
     }
 
-    int width = filledImage.cols;
-    int height = filledImage.rows;
-    uint8_t* srcData = filledImage.data;
-    int srcStep = (int)filledImage.step;
-    uint32_t* dstData = (uint32_t*)resultPixels;
-    int dstStride = width;
+    // Calcular firma desde contorno
+    vector<double> signatureCalc = calculateSignatureFromContour(contours[largestContourIdx]);
 
-    for (int y = 0; y < height; y++) {
-        uint8_t* srcRow = srcData + y * srcStep;
-        uint32_t* dstRow = dstData + y * dstStride;
-        for (int x = 0; x < width; x++) {
-            uint8_t val = srcRow[x];
-            dstRow[x] = 0xFF000000 | (val << 16) | (val << 8) | val;  // ARGB
+    // Comparar con descriptores
+    string bestLabel = "Desconocido";
+    double minDist = 1e10;
+
+    for (const Descriptor& d : g_descriptors) {
+        double distHu = 0;
+        for (int i = 0; i < 7; ++i) {
+            double diff = huMoments[i] - d.huMoments[i];
+            distHu += diff * diff;
+        }
+        distHu = sqrt(distHu);
+
+        double distSig = 0;
+        size_t len = min(d.signature.size(), signatureCalc.size());
+        for (size_t i = 0; i < len; ++i) {
+            double diff = signatureCalc[i] - d.signature[i];
+            distSig += diff * diff;
+        }
+        distSig = sqrt(distSig);
+
+        // Distancia total ponderada
+        double totalDist = distHu + distSig;
+
+        if (totalDist < minDist) {
+            minDist = totalDist;
+            bestLabel = d.label;
         }
     }
 
-    AndroidBitmap_unlockPixels(env, resultBitmap);
+    LOGI("Etiqueta detectada: %s", bestLabel.c_str());
 
-    return resultBitmap;
+    return env->NewStringUTF(bestLabel.c_str());
+}
+
+extern "C"
+JNIEXPORT jboolean JNICALL
+Java_ups_edu_aplicacionnativa_MainActivity_isShapeFilled(JNIEnv* env, jobject /* this */) {
+    return isShapeFilled ? JNI_TRUE : JNI_FALSE;
 }

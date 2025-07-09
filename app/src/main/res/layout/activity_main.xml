@@ -16,7 +16,7 @@
         android:id="@+id/button_process"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Procesar"
+        android:text="Clasificar"
         android:layout_marginTop="12dp" />
 
     <Button
@@ -24,13 +24,17 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="Limpiar"
-        android:layout_marginTop="12dp"/>
+        android:layout_marginTop="12dp" />
 
-    <ImageView
-        android:id="@+id/imageViewProcessed"
-        android:layout_width="379dp"
-        android:layout_height="300dp"
+    <TextView
+        android:id="@+id/text_result"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Etiqueta detectada"
+        android:textColor="#FFFFFF"
+        android:textSize="18sp"
+        android:textAlignment="center"
         android:layout_marginTop="16dp"
-        android:contentDescription="Imagen procesada" />
+        android:padding="16dp" />
 
 </LinearLayout>
