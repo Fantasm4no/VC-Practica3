@@ -3,7 +3,6 @@
 #include <opencv2/imgproc.hpp>
 #include <android/bitmap.h>
 #include <android/log.h>
-
 #include <string>
 #include <vector>
 #include <cmath>
@@ -22,6 +21,7 @@ struct Descriptor {
 static vector<Descriptor> g_descriptors;
 static bool isShapeFilled = true;
 
+// Cargar descriptores desde Java
 extern "C"
 JNIEXPORT void JNICALL
 Java_ups_edu_aplicacionnativa_MainActivity_setDescriptorsNative(JNIEnv* env, jobject /* this */,
@@ -46,7 +46,7 @@ Java_ups_edu_aplicacionnativa_MainActivity_setDescriptorsNative(JNIEnv* env, job
         jsize sigLen = env->GetArrayLength(sigArray);
 
         Descriptor d;
-        d.label = std::string(labelC);
+        d.label = string(labelC);
 
         for (int j = 0; j < 7; ++j) {
             d.huMoments[j] = huElements[j];
@@ -61,33 +61,20 @@ Java_ups_edu_aplicacionnativa_MainActivity_setDescriptorsNative(JNIEnv* env, job
         env->ReleaseDoubleArrayElements(sigArray, sigElements, JNI_ABORT);
     }
 
-    LOGI("Se cargaron %d descriptores nativos con firmas", (int)g_descriptors.size());
+    LOGI("Loaded %d descriptors", (int)g_descriptors.size());
 }
 
+// ✅ Nueva firma basada en pares (x, y) como en consola
 static vector<double> calculateSignatureFromContour(const vector<Point>& contour) {
-    Moments contourMoments = moments(contour);
-    Point2f centroid(contourMoments.m10 / contourMoments.m00, contourMoments.m01 / contourMoments.m00);
-
     vector<double> signature;
     for (const Point& pt : contour) {
-        double dist = norm(Point2f(pt) - centroid);
-        signature.push_back(dist);
+        signature.push_back(static_cast<double>(pt.x));
+        signature.push_back(static_cast<double>(pt.y));
     }
-
-    // Normalizar firma dividiendo por el valor máximo
-    double maxDist = 0;
-    for (double v : signature) {
-        if (v > maxDist) maxDist = v;
-    }
-    if (maxDist > 0) {
-        for (double& v : signature) {
-            v /= maxDist;
-        }
-    }
-
     return signature;
 }
 
+// Clasificación de figura desde un Bitmap
 extern "C"
 JNIEXPORT jstring JNICALL
 Java_ups_edu_aplicacionnativa_MainActivity_classifyShapeNative(JNIEnv* env, jobject /* this */, jobject bitmap) {
@@ -95,43 +82,42 @@ Java_ups_edu_aplicacionnativa_MainActivity_classifyShapeNative(JNIEnv* env, jobj
     void* pixels = nullptr;
 
     if (AndroidBitmap_getInfo(env, bitmap, &info) < 0) {
-        LOGI("Error al obtener info del bitmap");
+        LOGI("Error getting bitmap info");
         return env->NewStringUTF("Error");
     }
 
     if (info.format != ANDROID_BITMAP_FORMAT_RGBA_8888) {
-        LOGI("Formato de bitmap no soportado");
-        return env->NewStringUTF("Formato no soportado");
+        LOGI("Unsupported bitmap format");
+        return env->NewStringUTF("Unsupported format");
     }
 
     if (AndroidBitmap_lockPixels(env, bitmap, &pixels) < 0) {
-        LOGI("Error al bloquear pixeles");
+        LOGI("Error locking pixels");
         return env->NewStringUTF("Error");
     }
 
     Mat img(info.height, info.width, CV_8UC4, pixels);
 
-    // Procesamiento imagen: gris, blur, threshold, morph close
+    // Procesamiento de imagen
     Mat gray, blurred, binary, closed;
     cvtColor(img, gray, COLOR_RGBA2GRAY);
     GaussianBlur(gray, blurred, Size(5,5), 0);
-    threshold(blurred, binary, 0, 255, THRESH_BINARY | THRESH_OTSU);
+    threshold(blurred, binary, 0, 255, THRESH_BINARY_INV | THRESH_OTSU);
     Mat kernel = getStructuringElement(MORPH_ELLIPSE, Size(7,7));
     morphologyEx(binary, closed, MORPH_CLOSE, kernel, Point(-1,-1), 2);
 
     AndroidBitmap_unlockPixels(env, bitmap);
 
-    // Encontrar contornos
+    // Detectar contornos
     vector<vector<Point>> contours;
-    vector<Vec4i> hierarchy;
-    findContours(closed, contours, hierarchy, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
+    findContours(closed, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
 
     if (contours.empty()) {
-        LOGI("No se detectaron contornos");
-        return env->NewStringUTF("No figura");
+        LOGI("No contours detected");
+        return env->NewStringUTF("No shape");
     }
 
-    // Contorno más grande
+    // Encontrar el contorno más grande
     int largestContourIdx = 0;
     double maxArea = 0;
     for (size_t i = 0; i < contours.size(); i++) {
@@ -142,64 +128,65 @@ Java_ups_edu_aplicacionnativa_MainActivity_classifyShapeNative(JNIEnv* env, jobj
         }
     }
 
-    // Imagen rellena con contorno más grande
+    // Crear imagen rellena para momentos de Hu
     Mat filledImage = Mat::zeros(closed.size(), CV_8UC1);
     drawContours(filledImage, contours, largestContourIdx, Scalar(255), FILLED);
 
-    // Validar relleno
+    // Validar si está cerrada
     int whitePixels = countNonZero(filledImage);
     int totalPixels = filledImage.rows * filledImage.cols;
     double whiteRatio = (double)whitePixels / totalPixels;
     LOGI("White pixel ratio: %f", whiteRatio);
     isShapeFilled = (whiteRatio > 0.05);
 
-    // Momentos Hu sobre imagen rellena
+    // Calcular momentos Hu
     Moments moms = moments(filledImage, true);
     double huMoments[7];
     HuMoments(moms, huMoments);
 
-    // Normalizar momentos Hu
+    // Log transform para robustez (como en tu código original)
     for (int i = 0; i < 7; i++) {
         huMoments[i] = -1 * copysign(1.0, huMoments[i]) * log10(abs(huMoments[i]) + 1e-30);
     }
 
-    // Calcular firma desde contorno
-    vector<double> signatureCalc = calculateSignatureFromContour(contours[largestContourIdx]);
+    // Firma tipo (x,y)
+    vector<double> signature = calculateSignatureFromContour(contours[largestContourIdx]);
 
-    // Comparar con descriptores
-    string bestLabel = "Desconocido";
+    // Comparar con base de datos
+    string bestLabel = "Unknown";
     double minDist = 1e10;
 
-    for (const Descriptor& d : g_descriptors) {
+    for (const Descriptor& ref : g_descriptors) {
+        // Distancia de Hu Moments
         double distHu = 0;
         for (int i = 0; i < 7; ++i) {
-            double diff = huMoments[i] - d.huMoments[i];
+            double diff = huMoments[i] - ref.huMoments[i];
             distHu += diff * diff;
         }
         distHu = sqrt(distHu);
 
+        // Distancia de firma
         double distSig = 0;
-        size_t len = min(d.signature.size(), signatureCalc.size());
+        size_t len = min(signature.size(), ref.signature.size());
         for (size_t i = 0; i < len; ++i) {
-            double diff = signatureCalc[i] - d.signature[i];
+            double diff = signature[i] - ref.signature[i];
             distSig += diff * diff;
         }
         distSig = sqrt(distSig);
 
-        // Distancia total ponderada
         double totalDist = distHu + distSig;
 
         if (totalDist < minDist) {
             minDist = totalDist;
-            bestLabel = d.label;
+            bestLabel = ref.label;
         }
     }
 
-    LOGI("Etiqueta detectada: %s", bestLabel.c_str());
-
+    LOGI("Detected label: %s", bestLabel.c_str());
     return env->NewStringUTF(bestLabel.c_str());
 }
 
+// Devolver si está cerrada la figura
 extern "C"
 JNIEXPORT jboolean JNICALL
 Java_ups_edu_aplicacionnativa_MainActivity_isShapeFilled(JNIEnv* env, jobject /* this */) {

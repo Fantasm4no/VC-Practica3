@@ -24,15 +24,15 @@ public class DrawingView extends View {
 
         paint = new Paint();
         paint.setAntiAlias(true);
-        paint.setColor(Color.WHITE); // Dibujo en blanco
+        paint.setColor(Color.BLACK); // Dibujo en blanco
         paint.setStyle(Paint.Style.STROKE);
-        paint.setStrokeWidth(12); // Puedes ajustar este grosor
+        paint.setStrokeWidth(8); // Puedes ajustar este grosor
         paint.setStrokeJoin(Paint.Join.ROUND);
         paint.setStrokeCap(Paint.Cap.ROUND);
 
         path = new Path();
 
-        setBackgroundColor(Color.BLACK); // Fondo negro
+        setBackgroundColor(Color.WHITE); // Fondo negro
     }
 
     @Override
