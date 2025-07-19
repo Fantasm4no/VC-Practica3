@@ -1,3 +1,10 @@
 <resources>
     <string name="app_name">aplicacionnativa</string>
+
+    <string-array name="shape_labels">
+        <item>Circle</item>
+        <item>Square</item>
+        <item>Triangle</item>
+    </string-array>
+
 </resources>

@@ -3,28 +3,71 @@
     android:orientation="vertical"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000000"
-    android:padding="16dp">
+    android:background="#121212"
+    android:padding="16dp"
+    android:gravity="center_horizontal">
+
+    <TextView
+        android:id="@+id/textTitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Clasificador de Formas"
+        android:textSize="22sp"
+        android:textStyle="bold"
+        android:textColor="#FFFFFF"
+        android:layout_marginBottom="12dp" />
 
     <ups.edu.aplicacionnativa.DrawingView
         android:id="@+id/drawing_view"
         android:layout_width="match_parent"
-        android:layout_height="366dp"
-        android:layout_weight="1" />
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:layout_marginBottom="16dp"
+        android:background="#FFFFFF" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="¿Qué forma dibujaste?"
+        android:textColor="#FFFFFF"
+        android:textSize="16sp"
+        android:layout_marginBottom="4dp" />
+
+    <Spinner
+        android:id="@+id/spinnerExpectedLabel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="16dp"
+        android:entries="@array/shape_labels"
+        android:background="@android:drawable/btn_dropdown"
+        android:popupBackground="#E0D2E2" />
 
     <Button
         android:id="@+id/button_process"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="Clasificar"
-        android:layout_marginTop="12dp" />
+        android:layout_marginBottom="12dp"
+        android:backgroundTint="#03DAC6"
+        android:textColor="#000000" />
 
     <Button
         android:id="@+id/button_clear"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="Limpiar"
-        android:layout_marginTop="12dp" />
+        android:layout_marginBottom="12dp"
+        android:backgroundTint="#BB86FC"
+        android:textColor="#FFFFFF" />
+
+    <Button
+        android:id="@+id/button_show_report"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Ver Estadísticas"
+        android:layout_marginBottom="16dp"
+        android:backgroundTint="#FF5722"
+        android:textColor="#FFFFFF" />
 
     <TextView
         android:id="@+id/text_result"
@@ -33,8 +76,10 @@
         android:text="Etiqueta detectada"
         android:textColor="#FFFFFF"
         android:textSize="18sp"
-        android:textAlignment="center"
-        android:layout_marginTop="16dp"
-        android:padding="16dp" />
+        android:textStyle="italic"
+        android:gravity="center"
+        android:layout_marginTop="8dp"
+        android:padding="12dp"
+        android:background="#1F1B24" />
 
 </LinearLayout>
